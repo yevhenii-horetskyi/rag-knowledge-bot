@@ -1,90 +1,65 @@
 # RAG Knowledge Bot
 
-Telegram-бот, який відповідає на питання по твоїх власних документах.
-Завантажуєш PDF/текст → бот індексує його у векторну базу → відповідає на
-питання, спираючись тільки на ці документи, і вказує джерело.
+A Telegram bot that answers questions over uploaded documents. Send a PDF or text
+file — the bot indexes it into a vector database and answers questions grounded
+only in those documents, with a reference to the source.
 
-**Стек:** Python · OpenAI (embeddings + LLM) · Supabase (PostgreSQL + pgvector) · python-telegram-bot
-
----
-
-## Що таке RAG (коротко — і для співбесіди)
-
-**RAG = Retrieval-Augmented Generation.** Замість того щоб питати LLM «з голови»
-(де вона може вигадати), ми:
-
-1. **Retrieval** — знаходимо в базі шматки документів, найближчі за сенсом до питання.
-2. **Augmented** — вставляємо ці шматки в промпт як контекст.
-3. **Generation** — просимо LLM відповісти **лише** на основі цього контексту.
-
-Так відповідь спирається на реальні дані, а не на здогадки моделі, і завжди має джерело.
-
-**Як працює «пошук за сенсом»:** кожен шматок тексту перетворюється на вектор
-(embedding) — список чисел, що кодує зміст. Питання теж стає вектором. Далі шукаємо
-вектори, найближчі до питання (косинусна близькість) — це і є найрелевантніші фрагменти.
-Зберігання й пошук векторів робить розширення **pgvector** у PostgreSQL.
+**Stack:** Python · OpenAI (embeddings + LLM) · Supabase (PostgreSQL + pgvector) · python-telegram-bot
 
 ---
 
-## Архітектура
+## What it is and how it works
+
+The bot uses **RAG (Retrieval-Augmented Generation)** — it answers based on real
+documents rather than the model's own memory:
+
+1. each document is split into chunks, each chunk is turned into a vector (embedding) and stored in the database;
+2. when a question comes in, it is also turned into a vector, and the most semantically similar chunks are retrieved from the database;
+3. the retrieved chunks are passed to the model as context, and it produces an answer based only on them.
+
+This keeps answers grounded in real data instead of guesses, and every answer has
+a source. Vector storage and search are handled by the **pgvector** extension in
+PostgreSQL (Supabase).
+
+---
+
+## Architecture
 
 ```
-Документ ──► chunking ──► embeddings (OpenAI) ──► Supabase (pgvector)   [індексація, 1 раз]
+Document ──► split into chunks ──► embeddings (OpenAI) ──► Supabase (pgvector)
 
-Питання ──► embedding ──► пошук у pgvector ──► топ-K чанків
-                                                     │
-                                                     ▼
-                                    LLM (відповідь тільки по контексту) ──► відповідь + джерела
+Question ──► embedding ──► pgvector search ──► most relevant chunks
+                                                      │
+                                                      ▼
+                            LLM (answers from context only) ──► answer + source
 ```
 
 ```
 src/
-├── config.py    # ключі та параметри (модель, розмір чанка, top-k)
-├── ingest.py    # файл → чанки → embeddings → база
-├── rag.py       # пошук релевантних чанків + генерація відповіді
-└── bot.py       # Telegram-бот, що все звʼязує
-setup.sql        # таблиця pgvector + функція пошуку (виконати в Supabase)
+├── config.py    # keys and parameters (model, chunk size)
+├── ingest.py    # file → chunks → embeddings → database
+├── rag.py       # retrieve chunks + generate the answer
+└── bot.py       # Telegram bot
+setup.sql        # pgvector table + search function (run in Supabase)
 ```
 
 ---
 
-## Запуск
+## Setup
 
-**1. Supabase.** Створи безкоштовний проєкт на supabase.com → відкрий SQL Editor →
-встав вміст `setup.sql` → Run. Це створить таблицю й функцію пошуку.
+**1. Supabase.** Create a free project at supabase.com → SQL Editor →
+paste the contents of `setup.sql` → Run.
 
-**2. Ключі.** Скопіюй `.env.example` у `.env` і заповни:
+**2. Keys.** Copy `.env.example` to `.env` and fill in:
 - `OPENAI_API_KEY`
-- `SUPABASE_URL` і `SUPABASE_KEY` (Settings → API, бери service_role key)
-- `TELEGRAM_BOT_TOKEN` (від @BotFather)
+- `SUPABASE_URL` and `SUPABASE_KEY` (Settings → API, service_role key)
+- `TELEGRAM_BOT_TOKEN` (from @BotFather)
 
-**3. Встановлення й запуск.**
+**3. Install and run.**
 ```bash
 python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 python -m src.bot
 ```
 
-**4. Користування.** Відкрий бота в Telegram → надішли PDF/txt → постав питання.
-(Можна також масово проіндексувати папку `docs/`: `python -m src.ingest`.)
-
----
-
-## Що можна показати/сказати на співбесіді
-
-- **Чому chunking з перекриттям:** щоб думка на межі фрагментів не губилась.
-- **Чому text-embedding-3-small:** 1536 вимірів, дешева, достатньо точна для більшості задач.
-- **Чому temperature=0.2:** відповідь має бути фактичною, а не «творчою».
-- **Як боремося з галюцинаціями:** системний промпт змушує відповідати лише по контексту
-  й чесно казати, коли відповіді немає.
-- **Куди масштабувати:** ivfflat-індекс для швидкого пошуку; за потреби — reranking,
-  гібридний пошук (вектор + ключові слова), кеш ембеддингів.
-
----
-
-## Ідеї для розвитку (наступні кроки портфоліо)
-
-- Показувати не лише назву файлу, а й конкретну цитату-джерело
-- Гібридний пошук (semantic + full-text)
-- Веб-інтерфейс замість Telegram (або на додачу)
-- Мультитенантність: у кожного користувача своя база документів
+**4. Usage.** Open the bot in Telegram → send a PDF/txt → ask a question.
